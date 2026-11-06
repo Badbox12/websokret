@@ -1,0 +1,20 @@
+# Render Blueprint: Dashboard → New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: websokret-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true # redeploy on every push to main
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true # Render creates a strong random secret
+      - key: MONGODB_URI
+        sync: false # you paste it in the dashboard (kept secret)
+      - key: MONGODB_DB
+        value: chat
+      - key: CORS_ORIGIN
+        sync: false # your frontend URL, e.g. https://websokret.vercel.app

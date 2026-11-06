@@ -1,23 +1,25 @@
 {
-  "name": "demo",
-  "version": "1.0.50",
+  "name": "websokret-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time chat API: Bun + Elysia + WebSocket + MongoDB",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "concurrently -k -n api,web -c blue,magenta \"bun run dev:api\" \"bun run dev:web\"",
-    "dev:api": "bun run --watch src/index.ts",
+    "dev": "bun run --watch src/index.ts",
     "start": "NODE_ENV=production bun src/index.ts",
-    "dev:web": "cd web && bun run dev",
-    "setup": "bun install && cd web && bun install"
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.2",
     "@elysiajs/jwt": "^1.4.2",
-    "elysia": "latest",
+    "elysia": "^1.4.30",
     "mongodb": "^7.8.0"
   },
   "devDependencies": {
-    "bun-types": "latest",
-    "concurrently": "^10.0.6"
-  },
-  "module": "src/index.js"
+    "bun-types": "^1.4.4",
+    "typescript": "^5.9.3"
+  }
 }
