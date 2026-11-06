@@ -12,8 +12,8 @@
   "dependencies": {
     "@elysiajs/cors": "^1.4.2",
     "@elysiajs/jwt": "^1.4.2",
-    "@libsql/client": "^0.18.0",
-    "elysia": "latest"
+    "elysia": "latest",
+    "mongodb": "^7.8.0"
   },
   "devDependencies": {
     "bun-types": "latest",
