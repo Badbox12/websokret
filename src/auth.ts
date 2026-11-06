@@ -35,10 +35,10 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   .post(
     "/register",
     async ({ body, jwt, status }) => {
-      if (findUserByName(body.username)) {
+      if (await findUserByName(body.username)) {
         return status(409, { error: "username taken" });
       }
-      const user = createUser(
+      const user = await createUser(
         body.username,
         await Bun.password.hash(body.password),
       );
@@ -49,7 +49,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   .post(
     "/login",
     async ({ body, jwt, status }) => {
-      const user = findUserByName(body.username);
+      const user = await findUserByName(body.username);
       if (
         !user ||
         !(await Bun.password.verify(body.password, user.password_hash))
@@ -64,7 +64,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     { body: credentials },
   )
   .use(authGuard)
-  .get("/me", ({ userId, status }) => {
-    const user = findUserById(userId);
+  .get("/me", async ({ userId, status }) => {
+    const user = await findUserById(userId);
     return user ?? status(404, { error: "user not found" });
   });

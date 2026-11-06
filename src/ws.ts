@@ -20,6 +20,8 @@ const broadcast = (s: Pick<Sock, "publish">, topic: string, event: ServerEvent) 
 // ---------- Connection registry (single node; replace with Redis for multi-node) ----------
 const socketsByUser = new Map<string, Set<Sock>>();
 const userBySocket = new Map<string, string>();
+/** Per-socket promise chain so a client's frames are handled in arrival order. */
+const queues = new Map<string, Promise<void>>();
 
 const roomTopic = (roomId: string) => `room:${roomId}`;
 const PRESENCE = "presence";
@@ -64,15 +66,17 @@ export const wsGateway = new Elysia().use(jwtPlugin).ws("/ws", {
       return;
     }
     const userId = String(payload.sub);
-    const wasOnline = isOnline(userId);
+    const roomIds = await getUserRoomIds(userId);
+    if (ws.raw.readyState !== 1) return; // closed while we were loading
 
+    for (const roomId of roomIds) ws.subscribe(roomTopic(roomId));
+    ws.subscribe(PRESENCE);
+
+    // Register only after subscriptions exist, so nothing sent before "ready" is lost
+    const wasOnline = isOnline(userId);
     userBySocket.set(ws.id, userId);
     if (!socketsByUser.has(userId)) socketsByUser.set(userId, new Set());
     socketsByUser.get(userId)!.add(ws as unknown as Sock);
-
-    for (const roomId of getUserRoomIds(userId))
-      ws.subscribe(roomTopic(roomId));
-    ws.subscribe(PRESENCE);
 
     const online = [...socketsByUser.keys()].filter(isOnline);
     emit(ws, { type: "ready", userId, online });
@@ -91,63 +95,75 @@ export const wsGateway = new Elysia().use(jwtPlugin).ws("/ws", {
       return;
     }
 
-    switch (msg.type) {
-      case "ping":
-        emit(ws, { type: "pong" });
-        return;
+    const task = async () => {
+      switch (msg.type) {
+        case "ping":
+          emit(ws, { type: "pong" });
+          return;
 
-      case "message.send": {
-        if (!allow(userId)) {
-          emit(ws, { type: "error", code: "RATE_LIMITED", clientMsgId: msg.clientMsgId });
+        case "message.send": {
+          if (!allow(userId)) {
+            emit(ws, { type: "error", code: "RATE_LIMITED", clientMsgId: msg.clientMsgId });
+            return;
+          }
+          if (!(await isMember(msg.roomId, userId))) {
+            emit(ws, { type: "error", code: "FORBIDDEN", clientMsgId: msg.clientMsgId });
+            return;
+          }
+          const body = msg.body.trim();
+          if (!body) return;
+
+          const { message: saved, duplicate } = await saveMessage(
+            msg.roomId,
+            userId,
+            msg.clientMsgId,
+            body,
+          );
+          emit(ws, { type: "message.ack", clientMsgId: msg.clientMsgId, message: saved });
+          if (duplicate) return; // client retry: re-ack only, don't fan out again
+          // publish() excludes the sender; deliver to the sender's *other* tabs explicitly
+          broadcast(ws, roomTopic(msg.roomId), { type: "message.new", message: saved });
+          for (const s of socketsByUser.get(userId) ?? []) {
+            if (s.id !== ws.id) emit(s, { type: "message.new", message: saved });
+          }
           return;
         }
-        if (!isMember(msg.roomId, userId)) {
-          emit(ws, { type: "error", code: "FORBIDDEN", clientMsgId: msg.clientMsgId });
-          return;
-        }
-        const body = msg.body.trim();
-        if (!body) return;
 
-        const { message: saved, duplicate } = saveMessage(
-          msg.roomId,
-          userId,
-          msg.clientMsgId,
-          body,
-        );
-        emit(ws, { type: "message.ack", clientMsgId: msg.clientMsgId, message: saved });
-        if (duplicate) return; // client retry: re-ack only, don't fan out again
-        // publish() excludes the sender; deliver to the sender's *other* tabs explicitly
-        broadcast(ws, roomTopic(msg.roomId), { type: "message.new", message: saved });
-        for (const s of socketsByUser.get(userId) ?? []) {
-          if (s.id !== ws.id) emit(s, { type: "message.new", message: saved });
-        }
-        return;
+        case "typing":
+          if (!(await isMember(msg.roomId, userId))) return;
+          broadcast(ws, roomTopic(msg.roomId), {
+            type: "typing",
+            roomId: msg.roomId,
+            userId,
+            isTyping: msg.isTyping,
+          });
+          return;
+
+        case "read":
+          if (!(await isMember(msg.roomId, userId))) return;
+          await markRead(msg.roomId, userId, msg.seq);
+          broadcast(ws, roomTopic(msg.roomId), {
+            type: "read",
+            roomId: msg.roomId,
+            userId,
+            seq: msg.seq,
+          });
+          return;
       }
+    };
 
-      case "typing":
-        if (!isMember(msg.roomId, userId)) return;
-        broadcast(ws, roomTopic(msg.roomId), {
-          type: "typing",
-          roomId: msg.roomId,
-          userId,
-          isTyping: msg.isTyping,
-        });
-        return;
-
-      case "read":
-        if (!isMember(msg.roomId, userId)) return;
-        markRead(msg.roomId, userId, msg.seq);
-        broadcast(ws, roomTopic(msg.roomId), {
-          type: "read",
-          roomId: msg.roomId,
-          userId,
-          seq: msg.seq,
-        });
-        return;
-    }
+    // Process one socket's frames in order (DB calls are async now)
+    const next = (queues.get(ws.id) ?? Promise.resolve())
+      .then(task)
+      .catch((err) => {
+        console.error("ws message failed:", err);
+        emit(ws, { type: "error", code: "INTERNAL", message: "Something went wrong" });
+      });
+    queues.set(ws.id, next);
   },
 
   close(ws) {
+    queues.delete(ws.id);
     const userId = userBySocket.get(ws.id);
     if (!userId) return;
     userBySocket.delete(ws.id);

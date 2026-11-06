@@ -2,11 +2,19 @@ import os from "node:os";
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { authRoutes } from "./auth";
+import { migrate } from "./db";
 import { logger } from "./logger";
 import { roomRoutes } from "./rooms";
 import { wsGateway } from "./ws";
 
 const isProd = process.env.NODE_ENV === "production";
+
+if (isProd && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)) {
+  console.error("JWT_SECRET must be set (32+ chars) in production. Refusing to start.");
+  process.exit(1);
+}
+
+await migrate(); // create tables if missing (local file or Turso)
 const allowedOrigins = new Set(
   (process.env.CORS_ORIGIN ?? "http://localhost:3001").split(",").map((s) => s.trim()),
 );

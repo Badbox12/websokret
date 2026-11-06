@@ -25,7 +25,7 @@ export const ClientEventSchema = t.Union([
 export type ClientEvent = Static<typeof ClientEventSchema>;
 
 // ---------- Server → Client ----------
-export type ErrorCode = "NOT_READY" | "RATE_LIMITED" | "FORBIDDEN";
+export type ErrorCode = "NOT_READY" | "RATE_LIMITED" | "FORBIDDEN" | "INTERNAL";
 
 export type ServerEvent =
   | { type: "ready"; userId: string; online: string[] }
